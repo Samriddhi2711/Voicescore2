@@ -1,36 +1,58 @@
 from fastapi import FastAPI, UploadFile, File
 from models import Question, CompareRequest, CompareResponse
-import requests
 import os
 import google.generativeai as genai
 from typing import Dict
 from dotenv import load_dotenv  # <-- Add this
+import requests  # <-- Add this
+from fastapi.middleware.cors import CORSMiddleware
+
 
 load_dotenv()  # <-- Load environment variables from .env
 
 app = FastAPI()
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Yahan apne frontend ka URL bhi de sakte hain, e.g. ["http://localhost:3000"]
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # 1. Whisper Integration (Voice to Text)
 import whisper
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 @app.post("/voice-to-text/")
 async def voice_to_text(audio: UploadFile = File(...)):
     """
-    Accepts an audio file and returns the transcribed text using local Whisper (free).
+    Accepts an audio file and returns the transcribed text using OpenAI Whisper API (paid).
     """
     contents = await audio.read()
     temp_filename = "temp_audio.wav"
     with open(temp_filename, "wb") as f:
         f.write(contents)
+    print("Audio file saved at:", os.path.abspath(temp_filename))
 
     try:
-        model = whisper.load_model("base")  # You can use "tiny", "base", "small", "medium", "large"
-        result = model.transcribe(temp_filename)
+        with open(temp_filename, "rb") as audio_file:
+            response = requests.post(
+                "https://api.openai.com/v1/audio/transcriptions",
+                headers={"Authorization": f"Bearer {OPENAI_API_KEY}"},
+                files={"file": audio_file},
+                data={"model": "whisper-1"}
+            )
         os.remove(temp_filename)
-        return {"text": result["text"]}
+        if response.status_code == 200:
+            text = response.json()["text"]
+            return {"text": text}
+        else:
+            return {"text": f"OpenAI API Error: {response.text}"}
     except Exception as e:
-        os.remove(temp_filename)
-        return {"text": f"Error processing Whisper locally: {str(e)}"}
+        if os.path.exists(temp_filename):
+            os.remove(temp_filename)
+        return {"text": f"Error processing Whisper API: {str(e)}"}
+
     
 # 2. Gemini Expected Answer Generator
 
